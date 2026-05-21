@@ -61,7 +61,7 @@ attachCallHandlers(call);
 });
 device.register();
 deviceRef.current = device;
-} catch (err) { setDeviceError(Twilio init failed: ${err.message}); }
+} catch (err) { setDeviceError(`Twilio init failed: ${err.message}`); }
 }
 initDevice();
 return () => { deviceRef.current?.destroy(); };
