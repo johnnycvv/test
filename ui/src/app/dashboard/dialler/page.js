@@ -465,7 +465,7 @@ export default function DiallerPage() {
 
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', paddingTop: '8px' }}>
                 <button onClick={() => setShowCreate(false)} style={{ ...btn('#22263a', '#94a3b8'), border: '1px solid #2e3352' }}>Cancel</button>
-                <button onClick={createCampaign} disabled={!form.name || !form.messageText} style={btn('#2563eb')}>Create campaign</button>
+                <button onClick={createCampaign} style={{...btn('#2563eb'), opacity: (!form.name || !form.messageText) ? 0.5 : 1}}>Create campaign</button>
               </div>
             </div>
           </div>
