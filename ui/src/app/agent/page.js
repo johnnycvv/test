@@ -36,7 +36,7 @@ const qrToken = searchParams?.get('token');
 if (qrToken && !user) {
 localStorage.setItem('cc_token', qrToken);
 fetch((process.env.NEXT_PUBLIC_API_URL || 'https://cloudcall-api.onrender.com') + '/api/auth/me', {
-headers: { Authorization: Bearer ${qrToken} }
+headers: { Authorization: `Bearer ${qrToken}` }
 }).then(r => r.json()).then(data => {
 if (data.id) { localStorage.setItem('cc_user', JSON.stringify(data)); window.location.replace('/agent'); }
 }).catch(() => router.push('/login'));
