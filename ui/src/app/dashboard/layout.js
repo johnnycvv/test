@@ -62,4 +62,13 @@ export default function DashboardLayout({ children }) {
           <div style={{ color:'#003300', fontFamily:'monospace', fontSize:'0.65rem', padding:'2px 8px' }}>
             ROLE: {(user.role || 'unknown').toUpperCase()}
           </div>
-          <button onClick={logout} style={{ width:'100%', textAlign:'left', padding:'6px 8px', marginTop:'4px', color:'#006614', fontFamily:'monospace', fontSize:'0.7rem', background:'none', border:'none', cursor:'pointer', letterSpacing:'0.0
+          <button onClick={logout} style={{ width:'100%', textAlign:'left', padding:'6px 8px', marginTop:'4px', color:'#006614', fontFamily:'monospace', fontSize:'0.7rem', background:'none', border:'none', cursor:'pointer' }}>            [LOGOUT]
+          </button>
+        </div>
+      </aside>
+      <main style={{ flex:1, overflowY:'auto', background:'rgba(0,3,0,0.7)', backdropFilter:'blur(4px)' }}>
+        {children}
+      </main>
+    </div>
+  );
+}
