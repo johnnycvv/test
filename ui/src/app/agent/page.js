@@ -99,8 +99,7 @@ const call = await deviceRef.current.connect({ params: { To: dialNumber.trim(), 
 callRef.current = call;
 setCallInfo({ from: user.displayName, to: dialNumber.trim(), direction: 'outbound' });
 attachCallHandlers(call);
-} catch (err) { setDeviceError(err.message); setCallState(CALL_STATE.IDLE); }
-}
+} catch (err) { setDeviceError(`Twilio init failed: ${err.message}`); }
 function hangup() { setCallState(CALL_STATE.ENDING); callRef.current?.disconnect(); }
 function toggleMute() { if (!callRef.current) return; const next = !muted; callRef.current.mute(next); setMuted(next); }
 function toggleHold() { const next = !onHold; callRef.current?.mute(next); setOnHold(next); }
