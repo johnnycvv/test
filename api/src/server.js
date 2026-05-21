@@ -37,6 +37,7 @@ app.use('/api/live',   require('./routes/live'));
 app.use('/api/ivr',      require('./routes/ivr'));
 app.use('/api/payments', require('./routes/payments'));
 app.use('/api/twilio', require('./routes/twilio'));
+app.use('/api/dialler', require('./routes/dialler'));
 app.use('/api/chat',    require('./routes/chat'));
 
 // ── SIP config endpoint (for WebRTC softphone bootstrap) ────────────────────
