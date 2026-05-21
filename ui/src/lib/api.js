@@ -73,4 +73,36 @@ export const api = {
   },
   getStats: () => request('/api/cdr/stats'),
   exportCdr: async () => {
-    const blob = await reque
+    const blob = await request('/api/cdr/export');
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'call-logs.csv';
+    a.click();
+    URL.revokeObjectURL(url);
+  },
+  addCallNotes: (id, notes) => request(`/api/cdr/${id}/notes`, { method: 'PATCH', body: { notes } }),
+  simulateInbound: (data) => request('/api/cdr/simulate/inbound', { method: 'POST', body: data }),
+  getLiveOverview: () => request('/api/live/overview'),
+};
+
+export const chatApi = {
+  registerKey:   (publicKeyJwk) => request('/api/chat/keys', { method: 'POST', body: { publicKeyJwk } }),
+  getPeerKey:    (userId) => request(`/api/chat/keys/${userId}`),
+  getChannels:   () => request('/api/chat/channels'),
+  openDirect:    (targetUserId) => request('/api/chat/channels/direct', { method: 'POST', body: { targetUserId } }),
+  createGroup:   (name, memberIds) => request('/api/chat/channels/group', { method: 'POST', body: { name, memberIds } }),
+  getMessages:   (channelId, before, limit = 50) => request(`/api/chat/channels/${channelId}/messages?limit=${limit}${before ? '&before=' + before : ''}`),
+  sendMessage:   (channelId, payload) => request(`/api/chat/channels/${channelId}/messages`, { method: 'POST', body: payload }),
+  markRead:      (messageId) => request(`/api/chat/messages/${messageId}/read`, { method: 'PATCH' }),
+  deleteMessage: (messageId) => request(`/api/chat/messages/${messageId}`, { method: 'DELETE' }),
+  sendTyping:    (channelId) => request('/api/chat/typing', { method: 'POST', body: { channelId } }),
+  getAuditLog:   () => request('/api/chat/gdpr/audit'),
+  getRetention:  () => request('/api/chat/gdpr/retention'),
+  setRetention:  (retainDays) => request('/api/chat/gdpr/retention', { method: 'PATCH', body: { retainDays } }),
+  eraseMyData:   () => request('/api/chat/gdpr/my-data', { method: 'DELETE' }),
+};
+
+export const twilioApi = {
+  getToken: () => request('/api/twilio/token', { method: 'POST' }),
+};
