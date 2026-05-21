@@ -1,6 +1,7 @@
 'use client';
 import { useState, useEffect } from 'react';
 import { api } from '@/lib/api';
+import QrModal from '@/components/QrModal';
 
 function StatusBadge({ s }) {
   const map = { available:'badge-green', on_call:'badge-red', break:'badge-amber', offline:'badge-gray' };
@@ -18,6 +19,7 @@ function Modal({ title, onClose, children }) {
         {children}
       </div>
     </div>
+      {qrAgent && <QrModal agent={qrAgent} onClose={() => setQrAgent(null)} />}
   );
 }
 
@@ -29,6 +31,7 @@ export default function AgentsPage() {
   const [form, setForm]               = useState({ email:'', displayName:'', role:'agent', extension:'' });
   const [saving, setSaving]           = useState(false);
   const [error, setError]             = useState('');
+  const [qrAgent, setQrAgent]         = useState(null);
 
   async function load() { setAgents(await api.getAgents()); setLoading(false); }
   useEffect(() => { load(); }, []);
@@ -82,7 +85,10 @@ export default function AgentsPage() {
                 <td className="font-mono text-xs text-slate-500">{a.sip_username||'—'}</td>
                 <td><StatusBadge s={a.status}/></td>
                 <td>
-                  {a.is_active && <button className="btn-danger text-xs px-2 py-1" onClick={() => deactivate(a.id)}>Deactivate</button>}
+                  <div className="flex gap-2">
+                    <button className="btn-secondary text-xs px-2 py-1" onClick={() => setQrAgent(a)}>📱 QR</button>
+                    {a.is_active && <button className="btn-danger text-xs px-2 py-1" onClick={() => deactivate(a.id)}>Deactivate</button>}
+                  </div>
                 </td>
               </tr>
             ))}
@@ -125,5 +131,6 @@ export default function AgentsPage() {
         </Modal>
       )}
     </div>
+      {qrAgent && <QrModal agent={qrAgent} onClose={() => setQrAgent(null)} />}
   );
 }

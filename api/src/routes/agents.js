@@ -117,3 +117,21 @@ router.patch('/:id/password', async (req, res) => {
 });
 
 module.exports = router;
+
+// GET /api/agents/:id/qr-token — generate a short-lived token for QR code login
+router.get('/:id/qr-token', requireRole('admin'), async (req, res) => {
+  try {
+    const agent = await req.db.findOne('users', req.params.id);
+    if (!agent) return res.status(404).json({ error: 'Agent not found' });
+
+    const jwt = require('jsonwebtoken');
+    const token = jwt.sign(
+      { userId: agent.id, tenantId: req.tenantId, role: agent.role, email: agent.email, qr: true },
+      process.env.JWT_SECRET,
+      { expiresIn: '24h' }
+    );
+    res.json({ token, agentName: agent.display_name });
+  } catch (err) {
+    res.status(500).json({ error: 'Server error' });
+  }
+});

@@ -1,7 +1,7 @@
 'use client';
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useAuth } from '@/lib/auth';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { api, twilioApi } from '@/lib/api';
 import { useWebSocket } from '@/hooks/useWebSocket';
 
@@ -27,6 +27,7 @@ const CALL_STATE = {
 export default function AgentPage() {
   const { user, logout, loading } = useAuth();
   const router = useRouter();
+  const searchParams = useSearchParams();
 
   // Twilio device
   const deviceRef    = useRef(null);
@@ -45,6 +46,26 @@ export default function AgentPage() {
   const [notes,       setNotes]       = useState('');
   const [volume,      setVolume]      = useState(1);
   const timerRef = useRef(null);
+
+  // QR code auto-login
+  useEffect(() => {
+    const qrToken = searchParams?.get('token');
+    if (qrToken && !user) {
+      localStorage.setItem('cc_token', qrToken);
+      // Fetch user data from token
+      fetch((process.env.NEXT_PUBLIC_API_URL || 'https://cloudcall-api.onrender.com') + '/api/auth/me', {
+        headers: { Authorization: `Bearer ${qrToken}` }
+      })
+      .then(r => r.json())
+      .then(data => {
+        if (data.id) {
+          localStorage.setItem('cc_user', JSON.stringify(data));
+          window.location.replace('/agent');
+        }
+      })
+      .catch(() => router.push('/login'));
+    }
+  }, [searchParams]);
 
   useEffect(() => {
     if (!loading && !user) router.push('/login');
