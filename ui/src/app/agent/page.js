@@ -5,7 +5,8 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { api, twilioApi } from '@/lib/api';
 import { useWebSocket } from '@/hooks/useWebSocket';
 const pad = n => n < 10 ? '0' + n : n;
-const fmtTimer = s => ${pad(Math.floor(s / 60))}:${pad(s % 60)};
+const fmtTimer = s => `${pad(Math.floor(s / 60))}:${pad(s % 60)}`;
+
 const STATUSES = [
 { val: 'available', label: 'Available', dot: 'dot-green', text: 'text-emerald-400' },
 { val: 'break', label: 'On break', dot: 'dot-amber', text: 'text-amber-400' },
