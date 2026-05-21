@@ -28,10 +28,11 @@ async function request(path, opts = {}) {
     body: opts.body ? JSON.stringify(opts.body) : undefined,
   });
 
-  if (res.status === 401) {
+ if (res.status === 401) {
     clearToken();
     window.location.href = '/login';
-    return;
+    throw new Error('Unauthorized');
+  }
   }
 
   if (res.headers.get('content-type')?.includes('text/csv')) {
