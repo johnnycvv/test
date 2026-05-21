@@ -57,3 +57,4 @@ export default function LoginPage() {
           </button>
         </form>
         <div style={{ marginTop:'16px', textAlign:'center', color:'#003300', fontFamily:'monospace
+', fontSize:'0.65rem', letterSpacing:'0.1em' }}>ENCRYPTED CONNECTION ESTABLISHED</div></div></div>);}
