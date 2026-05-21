@@ -132,24 +132,28 @@ export default function DiallerPage() {
     }
   }, []));
 
-  async function createCampaign() {
-    const payload = {
-      name: form.name,
-      messageText: form.messageText || null,
-      audioUrl: form.audioUrl || null,
-      press1QueueId: form.press1QueueId || null,
-      trunkId: form.useCustomSip ? null : (form.trunkId || null),
-      customSipHost: form.useCustomSip ? form.customSipHost : null,
-      customSipUser: form.useCustomSip ? form.customSipUser : null,
-      customSipPass: form.useCustomSip ? form.customSipPass : null,
-      callerId: form.callerId || null,
-      callsPerMinute: parseInt(form.callsPerMinute) || 10,
-    };
-    const created = await req('/api/dialler/campaigns', { method: 'POST', body: payload });
-    await loadCampaigns();
-    setShowCreate(false);
-    setSelected(created);
-    setForm({ name:'', messageText:'', audioUrl:'', press1QueueId:'', trunkId:'', callerId:'', callsPerMinute:10, useCustomSip:false, customSipHost:'', customSipUser:'', customSipPass:'' });
+ async function createCampaign() {
+    try {
+      const payload = {
+        name: form.name,
+        messageText: form.messageText || null,
+        audioUrl: form.audioUrl || null,
+        press1QueueId: form.press1QueueId || null,
+        trunkId: form.useCustomSip ? null : (form.trunkId || null),
+        customSipHost: form.useCustomSip ? form.customSipHost : null,
+        customSipUser: form.useCustomSip ? form.customSipUser : null,
+        customSipPass: form.useCustomSip ? form.customSipPass : null,
+        callerId: form.callerId || null,
+        callsPerMinute: parseInt(form.callsPerMinute) || 10,
+      };
+      const created = await req('/api/dialler/campaigns', { method: 'POST', body: payload });
+      await loadCampaigns();
+      setShowCreate(false);
+      setSelected(created);
+      setForm({ name:'', messageText:'', audioUrl:'', press1QueueId:'', trunkId:'', callerId:'', callsPerMinute:10, useCustomSip:false, customSipHost:'', customSipUser:'', customSipPass:'' });
+    } catch(err) {
+      alert('Error: ' + err.message);
+    }
   }
 
   async function uploadCSV(campaignId) {
