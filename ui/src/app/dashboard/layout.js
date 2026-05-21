@@ -4,6 +4,7 @@ import Link from 'next/link';
 const NAV = [
   { href: '/dashboard', label: 'Live Dashboard' },
   { href: '/dashboard/chat', label: 'Agent Chat' },
+{ href: '/dashboard/dialler', label: 'Auto Dialler' },
   { href: '/dashboard/queues', label: 'Call Queues' },
   { href: '/dashboard/agents', label: 'Agents' },
   { href: '/dashboard/cdr', label: 'Call Logs' },
