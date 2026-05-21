@@ -125,12 +125,7 @@ export default function AgentsPage() {
             <div><span className="text-slate-500">Email: </span><span className="text-white">{newCreds.email}</span></div>
             <div><span className="text-slate-500">Temp password: </span><span className="text-amber-400">{newCreds.temporaryPassword}</span></div>
             <div><span className="text-slate-500">SIP user: </span><span className="text-white">{newCreds.sip_username}</span></div>
-          </div>
-          <p className="text-xs text-amber-500 mt-3">⚠ Ask the agent to change their password on first login.</p>
-          <button className="btn-primary mt-5 w-full justify-center" onClick={() => setNewCreds(null)}>Done</button>
-        </Modal>
-      )}
+         {qrAgent && <QrModal agent={qrAgent} onClose={() => setQrAgent(null)} />}
     </div>
-      {qrAgent && <QrModal agent={qrAgent} onClose={() => setQrAgent(null)} />}
   );
 }
