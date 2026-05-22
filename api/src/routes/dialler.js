@@ -1,519 +1,253 @@
+Go to https://github.com/johnnycvv/test/edit/main/api/src/routes/dialler.js
+Select all, delete, paste this:
+
 const express  = require('express');
 const multer   = require('multer');
-const { v4: uuidv4 } = require('uuid');
 const db       = require('../db/postgres');
 const { auth, requireRole } = require('../middleware/auth');
 const ts       = require('../middleware/tenantScope');
-const { broadcast } = require('../services/websocketBus');
-
-const router  = express.Router();
-const upload  = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
-
+const net      = require('net');
+const router = express.Router();
 router.use(auth, ts);
-router.use((req, res, next) => {
-  res.header('Access-Control-Allow-Origin', process.env.CORS_ORIGIN || '*');
-  res.header('Access-Control-Allow-Methods', 'GET,POST,PATCH,DELETE,OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Content-Type,Authorization');
-  if (req.method === 'OPTIONS') return res.sendStatus(200);
-  next();
-});
-// Active dialler engines per campaign
 const diallerEngines = new Map();
+function broadcast(tenantId, data) {
+try {
+const wss = global._wss;
+if (wss) wss.clients.forEach(c => { if (c.readyState === 1) c.send(JSON.stringify({ tenantId, ...data })); });
+} catch(e) {}
+}
+async function makeSIPCall(sipHost, sipUser, sipPass, callerId, toNumber) {
+return new Promise((resolve) => {
+const callId = Math.random().toString(36).substr(2, 16) + '@' + sipHost;
+const tag = Math.random().toString(36).substr(2, 8);
+const branch = 'z9hG4bK' + Math.random().toString(36).substr(2, 12);
+const from = callerId || sipUser + '@' + sipHost;
+let answered = false;
+let callEnded = false;
+let buffer = '';
+let cseq = 1;
+const socket = new net.Socket();
+socket.setTimeout(30000);
 
-// ── GET /api/dialler/campaigns ────────────────────────────────────────────────
-router.get('/campaigns', async (req, res) => {
-  try {
-    const result = await db.query(
-      `SELECT dc.*, q.name AS queue_name,
-              (SELECT COUNT(*) FROM dialler_numbers dn WHERE dn.campaign_id = dc.id) AS total_numbers
-       FROM dialler_campaigns dc
-       LEFT JOIN queues q ON q.id = dc.press1_queue_id
-       WHERE dc.tenant_id = $1
-       ORDER BY dc.created_at DESC`,
-      [req.tenantId]
-    );
-    res.json(result.rows);
-  } catch (err) {
-    console.error('[Dialler] campaigns error:', err.message);
-    res.status(500).json({ error: 'Server error' });
-  }
+socket.connect(5060, sipHost, () => {
+  const invite = buildInvite(sipHost, sipUser, from, toNumber, callId, tag, branch, cseq, null, null);
+  socket.write(invite);
 });
 
-// ── POST /api/dialler/campaigns ───────────────────────────────────────────────
-router.post('/campaigns', requireRole('admin', 'supervisor'), async (req, res) => {
-  try {
-    const {
-      name, messageText, audioUrl, press1QueueId,
-      trunkId, customSipHost, customSipUser, customSipPass,
-      callerId, callsPerMinute
-    } = req.body;
+socket.on('data', (data) => {
+  buffer += data.toString();
 
-    if (!name) return res.status(400).json({ error: 'Campaign name required' });
-    if (!messageText && !audioUrl) return res.status(400).json({ error: 'Message text or audio URL required' });
-
-    const result = await db.query(
-      `INSERT INTO dialler_campaigns
-         (tenant_id, name, message_text, audio_url, press1_queue_id, trunk_id,
-          custom_sip_host, custom_sip_user, custom_sip_pass, caller_id,
-          calls_per_minute, created_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,
-      [
-        req.tenantId, name, messageText || null, audioUrl || null,
-        press1QueueId || null, trunkId || null,
-        customSipHost || null, customSipUser || null, customSipPass || null,
-        callerId || null, callsPerMinute || 10, req.user.userId
-      ]
-    );
-    res.status(201).json(result.rows[0]);
-  } catch (err) {
-    console.error('[Dialler] create campaign error:', err.message);
-    res.status(500).json({ error: 'Server error' });
-  }
-});
-
-// ── POST /api/dialler/campaigns/:id/upload ────────────────────────────────────
-router.post('/campaigns/:id/upload', upload.single('csv'), async (req, res) => {
-  try {
-    const campaign = await db.query(
-      `SELECT * FROM dialler_campaigns WHERE id=$1 AND tenant_id=$2`,
-      [req.params.id, req.tenantId]
-    );
-    if (!campaign.rows[0]) return res.status(404).json({ error: 'Campaign not found' });
-    if (campaign.rows[0].status !== 'ready') {
-      return res.status(400).json({ error: 'Can only upload to a ready campaign' });
-    }
-
-    if (!req.file) return res.status(400).json({ error: 'CSV file required' });
-
-    const csv = req.file.buffer.toString('utf8');
-    const lines = csv.split('\n').map(l => l.trim()).filter(Boolean);
-
-    // Skip header row if it contains non-numeric first column
-    const startIdx = lines[0] && !/^\+?[\d\s()-]+$/.test(lines[0].split(',')[0]) ? 1 : 0;
-    const dataLines = lines.slice(startIdx);
-
-    const numbers = [];
-    for (const line of dataLines) {
-      const cols = line.split(',').map(c => c.trim().replace(/['"]/g, ''));
-      const phone = cols[0];
-      if (!phone || phone.length < 7) continue;
-      // Normalise to E.164 if starts with 0 (UK)
-      const normalised = phone.startsWith('0') ? '+44' + phone.slice(1) : phone;
-      numbers.push({ phone: normalised, name: cols[1] || null });
-    }
-
-    if (!numbers.length) return res.status(400).json({ error: 'No valid phone numbers found in CSV' });
-
-    // Clear existing numbers for this campaign
-    await db.query(`DELETE FROM dialler_numbers WHERE campaign_id=$1`, [req.params.id]);
-
-    // Batch insert
-    const client = await db.getClient();
-    try {
-      await client.query('BEGIN');
-      for (const n of numbers) {
-        await client.query(
-          `INSERT INTO dialler_numbers (campaign_id, phone_number, name) VALUES ($1,$2,$3)`,
-          [req.params.id, n.phone, n.name]
-        );
-      }
-      await client.query(
-        `UPDATE dialler_campaigns SET total_numbers=$1 WHERE id=$2`,
-        [numbers.length, req.params.id]
-      );
-      await client.query('COMMIT');
-    } catch (err) {
-      await client.query('ROLLBACK'); throw err;
-    } finally { client.release(); }
-
-    res.json({ ok: true, numbersLoaded: numbers.length, preview: numbers.slice(0, 5) });
-  } catch (err) {
-    console.error('[Dialler] upload error:', err.message);
-    res.status(500).json({ error: 'Server error' });
-  }
-});
-
-// ── GET /api/dialler/campaigns/:id/numbers ────────────────────────────────────
-router.get('/campaigns/:id/numbers', async (req, res) => {
-  try {
-    const result = await db.query(
-      `SELECT * FROM dialler_numbers WHERE campaign_id=$1 ORDER BY id LIMIT 200`,
-      [req.params.id]
-    );
-    res.json(result.rows);
-  } catch (err) {
-    res.status(500).json({ error: 'Server error' });
-  }
-});
-
-// ── POST /api/dialler/campaigns/:id/start ─────────────────────────────────────
-router.post('/campaigns/:id/start', requireRole('admin', 'supervisor'), async (req, res) => {
-  try {
-    const result = await db.query(
-      `SELECT dc.*, q.name AS queue_name FROM dialler_campaigns dc
-       LEFT JOIN queues q ON q.id = dc.press1_queue_id
-       WHERE dc.id=$1 AND dc.tenant_id=$2`,
-      [req.params.id, req.tenantId]
-    );
-    const campaign = result.rows[0];
-    if (!campaign) return res.status(404).json({ error: 'Campaign not found' });
-    if (!['ready','paused'].includes(campaign.status)) {
-      return res.status(400).json({ error: `Cannot start a ${campaign.status} campaign` });
-    }
-
-    const countResult = await db.query(
-      `SELECT COUNT(*) FROM dialler_numbers WHERE campaign_id=$1 AND status='pending'`,
-      [req.params.id]
-    );
-    if (parseInt(countResult.rows[0].count) === 0) {
-      return res.status(400).json({ error: 'No pending numbers to dial' });
-    }
-
-    await db.query(
-      `UPDATE dialler_campaigns SET status='running', started_at=COALESCE(started_at,now()) WHERE id=$1`,
-      [req.params.id]
-    );
-
-    broadcast(req.tenantId, { event: 'dialler.started', campaignId: req.params.id });
-
-    // Start the dialler engine
-    startDiallerEngine(req.params.id, req.tenantId, campaign);
-
-    res.json({ ok: true, message: 'Dialler started' });
-  } catch (err) {
-    console.error('[Dialler] start error:', err.message);
-    res.status(500).json({ error: 'Server error' });
-  }
-});
-
-// ── POST /api/dialler/campaigns/:id/pause ─────────────────────────────────────
-router.post('/campaigns/:id/pause', requireRole('admin', 'supervisor'), async (req, res) => {
-  try {
-    await db.query(
-      `UPDATE dialler_campaigns SET status='paused' WHERE id=$1 AND tenant_id=$2`,
-      [req.params.id, req.tenantId]
-    );
-    // Signal engine to pause
-    const engine = diallerEngines.get(req.params.id);
-    if (engine) engine.paused = true;
-
-    broadcast(req.tenantId, { event: 'dialler.paused', campaignId: req.params.id });
-    res.json({ ok: true, message: 'Dialler paused' });
-  } catch (err) {
-    res.status(500).json({ error: 'Server error' });
-  }
-});
-
-// ── POST /api/dialler/campaigns/:id/stop ──────────────────────────────────────
-router.post('/campaigns/:id/stop', requireRole('admin', 'supervisor'), async (req, res) => {
-  try {
-    await db.query(
-      `UPDATE dialler_campaigns SET status='stopped', completed_at=now() WHERE id=$1 AND tenant_id=$2`,
-      [req.params.id, req.tenantId]
-    );
-    const engine = diallerEngines.get(req.params.id);
-    if (engine) { engine.stopped = true; diallerEngines.delete(req.params.id); }
-
-    broadcast(req.tenantId, { event: 'dialler.stopped', campaignId: req.params.id });
-    res.json({ ok: true, message: 'Dialler stopped' });
-  } catch (err) {
-    res.status(500).json({ error: 'Server error' });
-  }
-});
-
-// ── GET /api/dialler/campaigns/:id/stats ──────────────────────────────────────
-router.get('/campaigns/:id/stats', async (req, res) => {
-  try {
-    const result = await db.query(
-      `SELECT
-         COUNT(*) FILTER (WHERE status='pending')     AS pending,
-         COUNT(*) FILTER (WHERE status='calling')     AS calling,
-         COUNT(*) FILTER (WHERE status='answered')    AS answered,
-         COUNT(*) FILTER (WHERE status='transferred') AS transferred,
-         COUNT(*) FILTER (WHERE status='failed')      AS failed,
-         COUNT(*) FILTER (WHERE status='no_answer')   AS no_answer,
-         COUNT(*) FILTER (WHERE status='busy')        AS busy,
-         COUNT(*)                                      AS total
-       FROM dialler_numbers WHERE campaign_id=$1`,
-      [req.params.id]
-    );
-    res.json(result.rows[0]);
-  } catch (err) {
-    res.status(500).json({ error: 'Server error' });
-  }
-});
-
-// ── Twilio webhook — called when dialled number answers ───────────────────────
-router.post('/twiml/:numberId', express.urlencoded({ extended: false }), async (req, res) => {
-  try {
-    const { numberId } = req.params;
-    const { CallStatus, CallSid } = req.body;
-
-    // Get number + campaign
-    const result = await db.query(
-      `SELECT dn.*, dc.message_text, dc.audio_url, dc.press1_queue_id, dc.tenant_id
-       FROM dialler_numbers dn
-       JOIN dialler_campaigns dc ON dc.id = dn.campaign_id
-       WHERE dn.id = $1`,
-      [numberId]
-    );
-    const num = result.rows[0];
-    if (!num) { res.type('text/xml').send('<Response><Hangup/></Response>'); return; }
-
-    // Update answered
-    await db.query(
-      `UPDATE dialler_numbers SET status='answered', answered_at=now(), call_sid=$1 WHERE id=$2`,
-      [CallSid, numberId]
-    );
-    await db.query(
-      `UPDATE dialler_campaigns SET calls_answered=calls_answered+1 WHERE id=$1`,
-      [num.campaign_id]
-    );
-
-    broadcast(num.tenant_id, {
-      event: 'dialler.answered',
-      campaignId: num.campaign_id,
-      numberId,
-      phone: num.phone_number,
-    });
-
-    const VoiceResponse = require('twilio').twiml.VoiceResponse;
-    const twiml = new VoiceResponse();
-
-    const gather = twiml.gather({
-      numDigits: 1,
-      action: `${process.env.APP_URL}/api/dialler/keypress/${numberId}`,
-      timeout: 10,
-    });
-
-    if (num.audio_url) {
-      gather.play(num.audio_url);
-    } else {
-      gather.say({ voice: 'Polly.Amy', language: 'en-GB' }, num.message_text || 'Press 1 to speak with an agent.');
-    }
-
-    // If no key pressed — hangup
-    twiml.hangup();
-
-    res.type('text/xml').send(twiml.toString());
-  } catch (err) {
-    console.error('[Dialler] twiml error:', err.message);
-    res.type('text/xml').send('<Response><Hangup/></Response>');
-  }
-});
-
-// ── Twilio webhook — keypress handler ─────────────────────────────────────────
-router.post('/keypress/:numberId', express.urlencoded({ extended: false }), async (req, res) => {
-  try {
-    const { Digits } = req.body;
-    const { numberId } = req.params;
-
-    const result = await db.query(
-      `SELECT dn.*, dc.press1_queue_id, dc.tenant_id
-       FROM dialler_numbers dn
-       JOIN dialler_campaigns dc ON dc.id = dn.campaign_id
-       WHERE dn.id = $1`,
-      [numberId]
-    );
-    const num = result.rows[0];
-
-    const VoiceResponse = require('twilio').twiml.VoiceResponse;
-    const twiml = new VoiceResponse();
-
-    if (Digits === '1' && num?.press1_queue_id) {
-      // Transfer to queue
-      await db.query(
-        `UPDATE dialler_numbers SET status='transferred', transferred_at=now() WHERE id=$1`,
-        [numberId]
-      );
-      await db.query(
-        `UPDATE dialler_campaigns SET calls_transferred=calls_transferred+1 WHERE id=$1`,
-        [num.campaign_id]
-      );
-
-      broadcast(num.tenant_id, {
-        event: 'dialler.transferred',
-        campaignId: num.campaign_id,
-        numberId,
-        phone: num.phone_number,
-      });
-
-      // Dial into the queue
-      const dial = twiml.dial({ timeout: 30 });
-      dial.queue(num.press1_queue_id);
-    } else {
-      twiml.say({ voice: 'Polly.Amy', language: 'en-GB' }, 'Thank you. Goodbye.');
-      twiml.hangup();
-    }
-
-    res.type('text/xml').send(twiml.toString());
-  } catch (err) {
-    console.error('[Dialler] keypress error:', err.message);
-    res.type('text/xml').send('<Response><Hangup/></Response>');
-  }
-});
-
-// ── Dialler engine — paces calls ─────────────────────────────────────────────
-function startDiallerEngine(campaignId, tenantId, campaign) {
-  if (diallerEngines.has(campaignId)) {
-    // Resume existing engine
-    const engine = diallerEngines.get(campaignId);
-    engine.paused = false;
+  if (buffer.includes('SIP/2.0 401') || buffer.includes('SIP/2.0 407')) {
+    const realm = buffer.match(/realm="([^"]+)"/)?.[1] || sipHost;
+    const nonce = buffer.match(/nonce="([^"]+)"/)?.[1] || '';
+    cseq++;
+    const invite = buildInvite(sipHost, sipUser, from, toNumber, callId, tag, branch, cseq, realm, nonce, sipPass);
+    buffer = '';
+    socket.write(invite);
     return;
   }
 
-  const engine = { paused: false, stopped: false };
-  diallerEngines.set(campaignId, engine);
-
-  const intervalMs = Math.max(1000, Math.floor(60000 / (campaign.calls_per_minute || 10)));
-
-  const tick = async () => {
-    if (engine.stopped) return;
-
-    // Check campaign status
-    const statusResult = await db.query(
-      `SELECT status FROM dialler_campaigns WHERE id=$1`, [campaignId]
-    );
-    const status = statusResult.rows[0]?.status;
-    if (!status || status === 'stopped' || status === 'completed') {
-      diallerEngines.delete(campaignId);
-      return;
-    }
-
-    if (engine.paused || status === 'paused') {
-      setTimeout(tick, 2000);
-      return;
-    }
-
-    // Get next pending number
-    const numResult = await db.query(
-      `SELECT * FROM dialler_numbers
-       WHERE campaign_id=$1 AND status='pending'
-       ORDER BY id LIMIT 1`,
-      [campaignId]
-    );
-
-    if (!numResult.rows[0]) {
-      // All numbers dialled — complete
-      await db.query(
-        `UPDATE dialler_campaigns SET status='completed', completed_at=now() WHERE id=$1`,
-        [campaignId]
-      );
-      broadcast(tenantId, { event: 'dialler.completed', campaignId });
-      diallerEngines.delete(campaignId);
-      return;
-    }
-
-    const number = numResult.rows[0];
-
-    // Mark as calling
-    await db.query(
-      `UPDATE dialler_numbers SET status='calling', called_at=now(), attempt_count=attempt_count+1 WHERE id=$1`,
-      [number.id]
-    );
-    await db.query(
-      `UPDATE dialler_campaigns SET calls_made=calls_made+1 WHERE id=$1`,
-      [campaignId]
-    );
-
-    broadcast(tenantId, {
-      event: 'dialler.calling',
-      campaignId,
-      numberId: number.id,
-      phone: number.phone_number,
-      name: number.name,
-    });
-
-    // Make the call via Twilio
-    try {
-      const accountSid  = process.env.TWILIO_ACCOUNT_SID;
-      const apiKey      = process.env.TWILIO_API_KEY;
-      const apiSecret   = process.env.TWILIO_API_SECRET;
-
-      if (accountSid && apiKey && apiSecret) {
-        const twilio = require('twilio')(apiKey, apiSecret, { accountSid });
-        const callerId = campaign.caller_id || process.env.TWILIO_CALLER_ID;
-        const twimlUrl = `${process.env.APP_URL}/api/dialler/twiml/${number.id}`;
-
-        await twilio.calls.create({
-          to:   number.phone_number,
-          from: callerId,
-          url:  twimlUrl,
-          statusCallback: `${process.env.APP_URL}/api/dialler/status/${number.id}`,
-          statusCallbackMethod: 'POST',
-          machineDetection: 'Enable',
-          timeout: 30,
-        });
-      } else {
-        // Simulate for dev/testing
-        console.log(`[Dialler] SIMULATED call to ${number.phone_number}`);
-        setTimeout(async () => {
-          await db.query(
-            `UPDATE dialler_numbers SET status='no_answer' WHERE id=$1 AND status='calling'`,
-            [number.id]
-          );
-          broadcast(tenantId, { event: 'dialler.no_answer', campaignId, numberId: number.id });
-        }, 3000);
+  if (!answered && buffer.includes('SIP/2.0 200') && buffer.includes('INVITE')) {
+    answered = true;
+    const ack = 'ACK sip:' + toNumber + '@' + sipHost + ' SIP/2.0\r\nVia: SIP/2.0/TCP ' + sipHost + ';branch=' + branch + 'ack\r\nMax-Forwards: 70\r\nFrom: <sip:' + from + '>;tag=' + tag + '\r\nTo: <sip:' + toNumber + '@' + sipHost + '>\r\nCall-ID: ' + callId + '\r\nCSeq: ' + cseq + ' ACK\r\nContent-Length: 0\r\n\r\n';
+    socket.write(ack);
+    setTimeout(() => {
+      if (!callEnded) {
+        callEnded = true;
+        const bye = 'BYE sip:' + toNumber + '@' + sipHost + ' SIP/2.0\r\nVia: SIP/2.0/TCP ' + sipHost + ';branch=' + branch + 'bye\r\nMax-Forwards: 70\r\nFrom: <sip:' + from + '>;tag=' + tag + '\r\nTo: <sip:' + toNumber + '@' + sipHost + '>\r\nCall-ID: ' + callId + '\r\nCSeq: ' + (cseq+1) + ' BYE\r\nContent-Length: 0\r\n\r\n';
+        socket.write(bye);
+        setTimeout(() => { socket.destroy(); resolve({ answered: true }); }, 1000);
       }
-    } catch (err) {
-      console.error('[Dialler] Twilio call failed:', err.message);
-      await db.query(
-        `UPDATE dialler_numbers SET status='failed' WHERE id=$1`,
-        [number.id]
-      );
-      await db.query(
-        `UPDATE dialler_campaigns SET calls_failed=calls_failed+1 WHERE id=$1`,
-        [campaignId]
-      );
-    }
+    }, 20000);
+  }
 
-    setTimeout(tick, intervalMs);
-  };
+  if (buffer.includes('SIP/2.0 486') || buffer.includes('SIP/2.0 603') || buffer.includes('SIP/2.0 404') || buffer.includes('SIP/2.0 480') || buffer.includes('SIP/2.0 503') || buffer.includes('SIP/2.0 403')) {
+    callEnded = true;
+    socket.destroy();
+    resolve({ answered: false, failed: true });
+  }
+});
 
-  setTimeout(tick, 500);
+socket.on('timeout', () => { callEnded = true; socket.destroy(); resolve({ answered: false, timeout: true }); });
+socket.on('error', (err) => { callEnded = true; resolve({ answered: false, error: err.message }); });
+socket.on('close', () => { if (!callEnded) { callEnded = true; resolve({ answered: false }); } });
+});
+}
+function buildInvite(sipHost, sipUser, from, toNumber, callId, tag, branch, cseq, realm, nonce, sipPass) {
+const crypto = require('crypto');
+let authHeader = '';
+if (realm && nonce && sipPass) {
+const ha1 = crypto.createHash('md5').update(sipUser + ':' + realm + ':' + sipPass).digest('hex');
+const ha2 = crypto.createHash('md5').update('INVITE:sip:' + toNumber + '@' + sipHost).digest('hex');
+const response = crypto.createHash('md5').update(ha1 + ':' + nonce + ':' + ha2).digest('hex');
+authHeader = 'Authorization: Digest username="' + sipUser + '",realm="' + realm + '",nonce="' + nonce + '",uri="sip:' + toNumber + '@' + sipHost + '",response="' + response + '"\r\n';
+}
+const sdp = 'v=0\r\no=' + sipUser + ' 1 1 IN IP4 ' + sipHost + '\r\ns=CloudCall\r\nc=IN IP4 ' + sipHost + '\r\nt=0 0\r\nm=audio 8000 RTP/AVP 0 8\r\na=rtpmap:0 PCMU/8000\r\na=rtpmap:8 PCMA/8000\r\n';
+return 'INVITE sip:' + toNumber + '@' + sipHost + ' SIP/2.0\r\nVia: SIP/2.0/TCP ' + sipHost + ';branch=' + branch + '\r\nMax-Forwards: 70\r\nFrom: <sip:' + from + '>;tag=' + tag + '\r\nTo: <sip:' + toNumber + '@' + sipHost + '>\r\nCall-ID: ' + callId + '\r\nCSeq: ' + cseq + ' INVITE\r\nContact: <sip:' + sipUser + '@' + sipHost + '>\r\n' + authHeader + 'Content-Type: application/sdp\r\nContent-Length: ' + sdp.length + '\r\n\r\n' + sdp;
+}
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
+router.get('/campaigns', async (req, res) => {
+try {
+const result = await db.query('SELECT dc., (SELECT COUNT() FROM dialler_numbers dn WHERE dn.campaign_id = dc.id) AS total_numbers, q.name AS queue_name FROM dialler_campaigns dc LEFT JOIN queues q ON q.id = dc.press1_queue_id WHERE dc.tenant_id = $1 ORDER BY dc.created_at DESC', [req.tenantId]);
+res.json(result.rows);
+} catch (err) { console.error('[Dialler] campaigns error:', err.message); res.status(500).json({ error: 'Server error' }); }
+});
+router.post('/campaigns', requireRole('admin', 'supervisor'), async (req, res) => {
+try {
+const { name, messageText, audioUrl, press1QueueId, trunkId, customSipHost, customSipUser, customSipPass, callerId, callsPerMinute } = req.body;
+if (!name) return res.status(400).json({ error: 'Campaign name required' });
+if (!messageText && !audioUrl) return res.status(400).json({ error: 'Message text or audio URL required' });
+const result = await db.query('INSERT INTO dialler_campaigns (tenant_id, name, message_text, audio_url, press1_queue_id, trunk_id, custom_sip_host, custom_sip_user, custom_sip_pass, caller_id, calls_per_minute, created_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *', [req.tenantId, name, messageText || null, audioUrl || null, press1QueueId || null, trunkId || null, customSipHost || null, customSipUser || null, customSipPass || null, callerId || null, callsPerMinute || 10, req.user.userId]);
+res.status(201).json(result.rows[0]);
+} catch (err) { console.error('[Dialler] create error:', err.message); res.status(500).json({ error: 'Server error' }); }
+});
+router.post('/campaigns/:id/upload', requireRole('admin', 'supervisor'), upload.single('csv'), async (req, res) => {
+try {
+const campaign = await db.query('SELECT * FROM dialler_campaigns WHERE id=$1 AND tenant_id=$2', [req.params.id, req.tenantId]);
+if (!campaign.rows[0]) return res.status(404).json({ error: 'Campaign not found' });
+if (campaign.rows[0].status !== 'ready') return res.status(400).json({ error: 'Can only upload to a ready campaign' });
+if (!req.file) return res.status(400).json({ error: 'CSV file required' });
+const csv = req.file.buffer.toString('utf8');
+const lines = csv.split('\n').map(l => l.trim()).filter(Boolean);
+const startIdx = lines[0] && !/^+?[\d\s()-]+$/.test(lines[0].split(',')[0]) ? 1 : 0;
+const numbers = [];
+for (const line of lines.slice(startIdx)) {
+const parts = line.split(',');
+const phone = parts[0].replace(/[\s-()]/g, '').trim();
+if (!phone) continue;
+const normalised = phone.startsWith('0') ? '+44' + phone.slice(1) : phone;
+if (!/^+?\d{7,15}$/.test(normalised)) continue;
+numbers.push({ phone: normalised, name: parts[1] ? parts[1].trim() : '' });
+}
+if (!numbers.length) return res.status(400).json({ error: 'No valid phone numbers found in CSV' });
+await db.query('DELETE FROM dialler_numbers WHERE campaign_id=$1', [req.params.id]);
+for (const n of numbers) {
+await db.query('INSERT INTO dialler_numbers (campaign_id, phone_number, name) VALUES ($1,$2,$3)', [req.params.id, n.phone, n.name]);
+}
+await db.query('UPDATE dialler_campaigns SET total_numbers=$1 WHERE id=$2', [numbers.length, req.params.id]);
+res.json({ ok: true, count: numbers.length });
+} catch (err) { console.error('[Dialler] upload error:', err.message); res.status(500).json({ error: 'Server error' }); }
+});
+router.get('/campaigns/:id/numbers', async (req, res) => {
+try {
+const result = await db.query('SELECT * FROM dialler_numbers WHERE campaign_id=$1 ORDER BY id LIMIT 200', [req.params.id]);
+res.json(result.rows);
+} catch (err) { res.status(500).json({ error: 'Server error' }); }
+});
+router.get('/campaigns/:id/stats', async (req, res) => {
+try {
+const result = await db.query('SELECT * FROM dialler_campaigns WHERE id=$1 AND tenant_id=$2', [req.params.id, req.tenantId]);
+if (!result.rows[0]) return res.status(404).json({ error: 'Not found' });
+res.json(result.rows[0]);
+} catch (err) { res.status(500).json({ error: 'Server error' }); }
+});
+router.post('/campaigns/:id/start', requireRole('admin', 'supervisor'), async (req, res) => {
+try {
+const result = await db.query('SELECT dc.*, st.registrar, st.username AS trunk_user, st.password AS trunk_pass FROM dialler_campaigns dc LEFT JOIN sip_trunks st ON st.id = dc.trunk_id WHERE dc.id=$1 AND dc.tenant_id=$2', [req.params.id, req.tenantId]);
+const campaign = result.rows[0];
+if (!campaign) return res.status(404).json({ error: 'Campaign not found' });
+if (!['ready','paused'].includes(campaign.status)) return res.status(400).json({ error: 'Cannot start a ' + campaign.status + ' campaign' });
+await db.query('UPDATE dialler_campaigns SET status='running', started_at=COALESCE(started_at,now()) WHERE id=$1', [req.params.id]);
+broadcast(req.tenantId, { event: 'dialler.started', campaignId: req.params.id });
+startDiallerEngine(req.params.id, req.tenantId, campaign);
+res.json({ ok: true, message: 'Dialler started' });
+} catch (err) { console.error('[Dialler] start error:', err.message); res.status(500).json({ error: 'Server error' }); }
+});
+router.post('/campaigns/:id/pause', requireRole('admin', 'supervisor'), async (req, res) => {
+try {
+await db.query('UPDATE dialler_campaigns SET status='paused' WHERE id=$1 AND tenant_id=$2', [req.params.id, req.tenantId]);
+const engine = diallerEngines.get(req.params.id);
+if (engine) engine.paused = true;
+broadcast(req.tenantId, { event: 'dialler.paused', campaignId: req.params.id });
+res.json({ ok: true });
+} catch (err) { res.status(500).json({ error: 'Server error' }); }
+});
+router.post('/campaigns/:id/stop', requireRole('admin', 'supervisor'), async (req, res) => {
+try {
+await db.query('UPDATE dialler_campaigns SET status='stopped', completed_at=now() WHERE id=$1 AND tenant_id=$2', [req.params.id, req.tenantId]);
+const engine = diallerEngines.get(req.params.id);
+if (engine) { engine.stopped = true; diallerEngines.delete(req.params.id); }
+broadcast(req.tenantId, { event: 'dialler.stopped', campaignId: req.params.id });
+res.json({ ok: true });
+} catch (err) { res.status(500).json({ error: 'Server error' }); }
+});
+router.delete('/campaigns/:id', requireRole('admin', 'supervisor'), async (req, res) => {
+try {
+const engine = diallerEngines.get(req.params.id);
+if (engine) { engine.stopped = true; diallerEngines.delete(req.params.id); }
+await db.query('DELETE FROM dialler_numbers WHERE campaign_id=$1', [req.params.id]);
+await db.query('DELETE FROM dialler_campaigns WHERE id=$1 AND tenant_id=$2', [req.params.id, req.tenantId]);
+res.json({ ok: true });
+} catch (err) { res.status(500).json({ error: 'Server error' }); }
+});
+function startDiallerEngine(campaignId, tenantId, campaign) {
+if (diallerEngines.has(campaignId)) {
+diallerEngines.get(campaignId).paused = false;
+return;
+}
+const engine = { paused: false, stopped: false };
+diallerEngines.set(campaignId, engine);
+const intervalMs = Math.max(1000, Math.floor(60000 / (campaign.calls_per_minute || 10)));
+const tick = async () => {
+if (engine.stopped) return;
+const statusResult = await db.query('SELECT status FROM dialler_campaigns WHERE id=$1', [campaignId]);
+const status = statusResult.rows[0]?.status;
+if (!status || status === 'stopped' || status === 'completed') { diallerEngines.delete(campaignId); return; }
+if (engine.paused || status === 'paused') { setTimeout(tick, 2000); return; }
+const numResult = await db.query('SELECT * FROM dialler_numbers WHERE campaign_id=$1 AND status=\'pending\' ORDER BY id LIMIT 1', [campaignId]);
+if (!numResult.rows[0]) {
+  await db.query('UPDATE dialler_campaigns SET status=\'completed\', completed_at=now() WHERE id=$1', [campaignId]);
+  broadcast(tenantId, { event: 'dialler.completed', campaignId });
+  diallerEngines.delete(campaignId);
+  return;
 }
 
-// ── Call status webhook ────────────────────────────────────────────────────────
-router.post('/status/:numberId', express.urlencoded({ extended: false }), async (req, res) => {
+const number = numResult.rows[0];
+await db.query('UPDATE dialler_numbers SET status=\'calling\', called_at=now(), attempt_count=attempt_count+1 WHERE id=$1', [number.id]);
+await db.query('UPDATE dialler_campaigns SET calls_made=calls_made+1 WHERE id=$1', [campaignId]);
+broadcast(tenantId, { event: 'dialler.calling', campaignId, numberId: number.id, phone: number.phone_number, name: number.name });
+
+let sipHost = campaign.custom_sip_host || campaign.registrar;
+let sipUser = campaign.custom_sip_user || campaign.trunk_user;
+let sipPass = campaign.custom_sip_pass || campaign.trunk_pass;
+const callerId = campaign.caller_id;
+
+if (!sipHost) {
   try {
-    const { CallStatus } = req.body;
-    const { numberId } = req.params;
+    const tr = await db.query('SELECT registrar, username, password FROM sip_trunks WHERE tenant_id=$1 AND is_active=true ORDER BY created_at ASC LIMIT 1', [tenantId]);
+    if (tr.rows[0]) { sipHost = tr.rows[0].registrar; sipUser = sipUser || tr.rows[0].username; sipPass = sipPass || tr.rows[0].password; }
+  } catch(e) {}
+}
 
-    const statusMap = {
-      'no-answer': 'no_answer',
-      'busy':      'busy',
-      'failed':    'failed',
-      'canceled':  'failed',
-    };
+if (sipHost) sipHost = sipHost.replace('wss://', '').replace('ws://', '').replace('sip:', '').split(':')[0];
 
-    if (statusMap[CallStatus]) {
-      const result = await db.query(
-        `UPDATE dialler_numbers SET status=$1 WHERE id=$2 AND status='calling' RETURNING campaign_id`,
-        [statusMap[CallStatus], numberId]
-      );
-      if (result.rows[0] && statusMap[CallStatus] === 'failed') {
-        await db.query(
-          `UPDATE dialler_campaigns SET calls_failed=calls_failed+1 WHERE id=$1`,
-          [result.rows[0].campaign_id]
-        );
-      }
-    }
-    res.sendStatus(204);
-  } catch (err) {
-    res.sendStatus(204);
+if (!sipHost || !sipUser || !sipPass) {
+  await db.query('UPDATE dialler_numbers SET status=\'failed\' WHERE id=$1', [number.id]);
+  await db.query('UPDATE dialler_campaigns SET calls_failed=calls_failed+1 WHERE id=$1', [campaignId]);
+  broadcast(tenantId, { event: 'dialler.failed', campaignId, numberId: number.id, reason: 'No SIP trunk' });
+  setTimeout(tick, intervalMs);
+  return;
+}
+
+try {
+  console.log('[Dialler] Calling', number.phone_number, 'via', sipHost);
+  const result = await makeSIPCall(sipHost, sipUser, sipPass, callerId, number.phone_number);
+  if (result.answered) {
+    await db.query('UPDATE dialler_numbers SET status=\'answered\' WHERE id=$1', [number.id]);
+    await db.query('UPDATE dialler_campaigns SET calls_answered=calls_answered+1 WHERE id=$1', [campaignId]);
+    broadcast(tenantId, { event: 'dialler.answered', campaignId, numberId: number.id, phone: number.phone_number });
+  } else {
+    await db.query('UPDATE dialler_numbers SET status=\'failed\' WHERE id=$1', [number.id]);
+    await db.query('UPDATE dialler_campaigns SET calls_failed=calls_failed+1 WHERE id=$1', [campaignId]);
+    broadcast(tenantId, { event: 'dialler.failed', campaignId, numberId: number.id, phone: number.phone_number });
   }
-});
-
-// ── DELETE campaign ────────────────────────────────────────────────────────────
-router.delete('/campaigns/:id', requireRole('admin'), async (req, res) => {
-  try {
-    const engine = diallerEngines.get(req.params.id);
-    if (engine) { engine.stopped = true; diallerEngines.delete(req.params.id); }
-    await db.query(`DELETE FROM dialler_campaigns WHERE id=$1 AND tenant_id=$2`, [req.params.id, req.tenantId]);
-    res.json({ ok: true });
-  } catch (err) {
-    res.status(500).json({ error: 'Server error' });
-  }
-});
-
+} catch (err) {
+  console.error('[Dialler] Call error:', err.message);
+  await db.query('UPDATE dialler_numbers SET status=\'failed\' WHERE id=$1', [number.id]);
+  await db.query('UPDATE dialler_campaigns SET calls_failed=calls_failed+1 WHERE id=$1', [campaignId]);
+}
+setTimeout(tick, intervalMs);
+};
+tick();
+}
 module.exports = router;
