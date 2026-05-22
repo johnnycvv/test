@@ -30,15 +30,18 @@ res.status(201).json({ ...result.rows[0], temporaryPassword });
 router.patch('/:id', requireRole('admin', 'supervisor'), async (req, res) => {
   try {
     const { displayName, role, extension, isActive } = req.body;
-    const fields = []; const vals = []; let i = 1;
-    if (displayName !== undefined) { fields.push('display_name=$' + i++); vals.push(displayName); }
-    if (role !== undefined) { fields.push('role=$' + i++); vals.push(role); }
-    if (extension !== undefined) { fields.push('extension=$' + i++); vals.push(extension); }
-    if (isActive !== undefined) { fields.push('is_active=$' + i++); vals.push(isActive); }
+    const fields = [];
+    const vals = [];
+    let i = 1;
+    if (displayName !== undefined) { fields.push('display_name=$' + i); i++; vals.push(displayName); }
+    if (role !== undefined) { fields.push('role=$' + i); i++; vals.push(role); }
+    if (extension !== undefined) { fields.push('extension=$' + i); i++; vals.push(extension); }
+    if (isActive !== undefined) { fields.push('is_active=$' + i); i++; vals.push(isActive); }
     if (!fields.length) return res.status(400).json({ error: 'Nothing to update' });
     vals.push(req.params.id, req.tenantId);
-    await db.query('UPDATE users SET ' + fields.join(',') + ' WHERE id=′+i+++′ANDtenantid=' + i++ + ' AND tenant_id=
-′+i+++′ANDtenanti​d=' + i, vals);
+    const q = 'UPDATE users SET ' + fields.join(',') + ' WHERE id=′+i+′ANDtenantid=' + i + ' AND tenant_id=
+′+i+′ANDtenanti​d=' + (i + 1);
+    await db.query(q, vals);
     res.json({ ok: true });
   } catch (err) { res.status(500).json({ error: 'Server error' }); }
 });
@@ -82,7 +85,8 @@ if (!agent) return res.status(404).json({ error: 'Agent not found' });
 if (!agent.registrar) return res.status(404).json({ error: 'No SIP trunk configured. Add one in Dashboard first.' });
 const username = agent.sip_username || agent.trunk_user;
 const password = agent.sip_password || agent.trunk_pass;
-const server = agent.registrar.replace(/^wss?:///, '').split(':')[0];
+const reg = agent.registrar || '';
+const server = reg.replace('wss://', '').replace('ws://', '').split(':')[0];
 const realm = agent.realm || server;
 if (!username || !password) return res.status(400).json({ error: 'No SIP credentials found for this agent.' });
 res.json({ username, password, server, realm, transport: 'tls', displayName: agent.display_name, extension: agent.extension, sipUri: 'sip:' + username + ':' + password + '@' + server + ';transport=tls' });
