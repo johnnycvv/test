@@ -1,7 +1,3 @@
-Open in Notepad:
-powershellnotepad "C:\Users\PC WORLD\Downloads\cloudcall-v4-twilio\ui\src\app\dashboard\queues\page.js"
-Select all, delete, paste everything between the lines:
-
 'use client';
 import { useState, useEffect } from 'react';
 const API = process.env.NEXT_PUBLIC_API_URL || 'https://cloudcall-api.onrender.com';
