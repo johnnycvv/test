@@ -1,83 +1,108 @@
 'use client';
 import { useState, useEffect } from 'react';
-import { api } from '@/lib/api';
 import QrModal from '@/components/QrModal';
-function StatusBadge({ s }) {
-const map = { available:'badge-green', on_call:'badge-red', break:'badge-amber', offline:'badge-gray' };
-return <span className={map[s]||'badge-gray'}>{s?.replace('_',' ')}</span>;
-}
+const API = process.env.NEXT_PUBLIC_API_URL || 'https://cloudcall-api.onrender.com';
+const tok = () => localStorage.getItem('cc_token');
+const apiFetch = (path, opts={}) => fetch(API + path, { ...opts, headers: { Authorization: 'Bearer ' + tok(), 'Content-Type': 'application/json', ...(opts.headers||{}) } }).then(r => r.json());
+const inputStyle = { width:'100%', padding:'8px 12px', background:'#13161f', border:'1px solid #2e3352', borderRadius:'6px', color:'#e2e8f0', fontSize:'0.875rem', outline:'none', marginTop:'4px' };
+const labelStyle = { display:'block', fontSize:'0.8rem', color:'#8892aa', marginBottom:'2px' };
+const btnPrimary = { padding:'8px 16px', background:'#2563eb', color:'#fff', border:'none', borderRadius:'6px', cursor:'pointer', fontSize:'0.875rem', fontWeight:600 };
+const btnSecondary = { padding:'8px 16px', background:'#1e2235', color:'#e2e8f0', border:'1px solid #2e3352', borderRadius:'6px', cursor:'pointer', fontSize:'0.875rem' };
+const btnDanger = { padding:'4px 10px', background:'rgba(220,38,38,0.15)', color:'#f87171', border:'1px solid rgba(220,38,38,0.3)', borderRadius:'4px', cursor:'pointer', fontSize:'0.75rem' };
+const btnGhost = { padding:'4px 10px', background:'rgba(0,255,65,0.06)', color:'#00aa2a', border:'1px solid rgba(0,255,65,0.15)', borderRadius:'4px', cursor:'pointer', fontSize:'0.75rem' };
 function Modal({ title, onClose, children }) {
 return (
-<div className="modal-bg">
-<div className="card w-full max-w-md p-6 rounded-2xl">
-<div className="flex items-center justify-between mb-5">
-<h2 className="text-base font-semibold text-white">{title}</h2>
-<button onClick={onClose} className="btn-ghost p-1 text-slate-400">✕</button>
+<div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.7)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:50,padding:'16px'}}>
+<div style={{width:'100%',maxWidth:'440px',background:'rgba(0,8,0,0.97)',border:'1px solid rgba(0,255,65,0.3)',borderRadius:'8px',padding:'24px'}}>
+<div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'20px'}}>
+<h2 style={{color:'#00ff41',fontFamily:'monospace',fontSize:'0.9rem',fontWeight:'bold',letterSpacing:'0.1em'}}>{title}</h2>
+<button onClick={onClose} style={{background:'none',border:'none',color:'#006614',cursor:'pointer',fontSize:'1.2rem'}}>✕</button>
 </div>
 {children}
 </div>
 </div>
 );
 }
+function StatusBadge({ s }) {
+const colors = { available:'#00ff41', on_call:'#ff4444', break:'#ffaa00', offline:'#333300' };
+const color = colors[s] || '#333300';
+return <span style={{padding:'2px 8px',borderRadius:'12px',fontSize:'0.7rem',fontFamily:'monospace',background:color+'18',color,border:'1px solid '+color+'44'}}>{(s||'offline').replace('_',' ')}</span>;
+}
 export default function AgentsPage() {
-const [agents,     setAgents]     = useState([]);
-const [loading,    setLoading]    = useState(true);
+const [agents, setAgents]         = useState([]);
+const [loading, setLoading]       = useState(true);
 const [showInvite, setShowInvite] = useState(false);
-const [newCreds,   setNewCreds]   = useState(null);
-const [qrAgent,    setQrAgent]    = useState(null);
-const [form,       setForm]       = useState({ email:'', displayName:'', role:'agent', extension:'' });
-const [saving,     setSaving]     = useState(false);
-const [error,      setError]      = useState('');
-async function load() { setAgents(await api.getAgents()); setLoading(false); }
+const [newCreds, setNewCreds]     = useState(null);
+const [qrAgent, setQrAgent]       = useState(null);
+const [form, setForm]             = useState({ email:'', displayName:'', role:'agent', extension:'' });
+const [saving, setSaving]         = useState(false);
+const [error, setError]           = useState('');
+async function load() {
+try {
+const a = await apiFetch('/api/agents');
+setAgents(Array.isArray(a) ? a : []);
+} catch(e) { console.error(e); }
+setLoading(false);
+}
 useEffect(() => { load(); }, []);
 async function invite() {
 setSaving(true); setError('');
 try {
-const result = await api.inviteAgent(form);
+const result = await apiFetch('/api/agents/invite', { method:'POST', body: JSON.stringify({ email: form.email, displayName: form.displayName, role: form.role, extension: form.extension }) });
+if (result.error) throw new Error(result.error);
 setNewCreds(result); setShowInvite(false);
 setForm({ email:'', displayName:'', role:'agent', extension:'' });
 await load();
-} catch (e) { setError(e.message); } finally { setSaving(false); }
+} catch(e) { setError(e.message); } finally { setSaving(false); }
 }
 async function deactivate(id) {
 if (!confirm('Deactivate this agent?')) return;
-await api.updateAgent(id, { isActive: false }); await load();
+await apiFetch('/api/agents/' + id, { method:'PATCH', body: JSON.stringify({ isActive: false }) });
+await load();
 }
-if (loading) return <div className="flex items-center justify-center h-64"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"/></div>;
+if (loading) return (
+<div style={{display:'flex',alignItems:'center',justifyContent:'center',height:'200px',color:'#006614',fontFamily:'monospace',letterSpacing:'0.1em'}}>[ LOADING AGENTS... ]</div>
+);
 return (
-<div className="p-6">
-<div className="page-header">
+<div style={{padding:'24px'}}>
+<div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'24px'}}>
 <div>
-<h1 className="page-title">Agents</h1>
-<p className="page-sub">{agents.length} users in your account</p>
+<h1 style={{fontSize:'1.25rem',fontWeight:700,color:'#00ff41',fontFamily:'monospace',letterSpacing:'0.1em'}}>[AGENTS]</h1>
+<p style={{fontSize:'0.8rem',color:'#006614',marginTop:'2px',fontFamily:'monospace'}}>// {agents.length} users in your account</p>
 </div>
-<button className="btn-primary" onClick={() => setShowInvite(true)}>+ Invite agent</button>
+<button style={btnPrimary} onClick={() => setShowInvite(true)}>+ Invite agent</button>
 </div>
-  <div className="card overflow-hidden">
-    <table className="table">
-      <thead><tr><th>Agent</th><th>Role</th><th>Extension</th><th>SIP Username</th><th>Status</th><th></th></tr></thead>
+  <div style={{background:'rgba(0,8,0,0.9)',border:'1px solid rgba(0,255,65,0.15)',borderRadius:'8px',overflow:'hidden'}}>
+    <table style={{width:'100%',borderCollapse:'collapse',fontSize:'0.875rem'}}>
+      <thead>
+        <tr style={{background:'rgba(0,15,0,0.8)'}}>
+          {['Agent','Role','Extension','SIP Username','Status',''].map(h => (
+            <th key={h} style={{padding:'10px 14px',textAlign:'left',color:'#006614',fontFamily:'monospace',fontSize:'0.7rem',letterSpacing:'0.1em',borderBottom:'1px solid rgba(0,255,65,0.1)'}}>{h}</th>
+          ))}
+        </tr>
+      </thead>
       <tbody>
         {agents.map(a => (
-          <tr key={a.id}>
-            <td>
-              <div className="flex items-center gap-2.5">
-                <div className="w-8 h-8 rounded-full bg-blue-900/40 border border-blue-800/30 flex items-center justify-center text-xs font-bold text-blue-400 flex-shrink-0">
-                  {a.display_name?.[0]?.toUpperCase()}
+          <tr key={a.id} style={{borderBottom:'1px solid rgba(0,255,65,0.06)'}}>
+            <td style={{padding:'12px 14px'}}>
+              <div style={{display:'flex',alignItems:'center',gap:'10px'}}>
+                <div style={{width:'32px',height:'32px',borderRadius:'50%',background:'rgba(0,255,65,0.08)',border:'1px solid rgba(0,255,65,0.2)',display:'flex',alignItems:'center',justifyContent:'center',color:'#00ff41',fontWeight:'bold',fontSize:'0.875rem',flexShrink:0}}>
+                  {(a.display_name||'?')[0].toUpperCase()}
                 </div>
                 <div>
-                  <p className="text-sm font-medium text-white">{a.display_name}</p>
-                  <p className="text-xs text-slate-500">{a.email}</p>
+                  <div style={{color:'#e2e8f0',fontWeight:500}}>{a.display_name}</div>
+                  <div style={{fontSize:'0.75rem',color:'#64748b'}}>{a.email}</div>
                 </div>
               </div>
             </td>
-            <td><span className="badge-indigo capitalize">{a.role}</span></td>
-            <td className="font-mono text-sm text-slate-300">{a.extension||'—'}</td>
-            <td className="font-mono text-xs text-slate-500">{a.sip_username||'—'}</td>
-            <td><StatusBadge s={a.status}/></td>
-            <td>
-              <div className="flex gap-2">
-                <button className="btn-secondary text-xs px-2 py-1" onClick={() => setQrAgent(a)}>📱 QR</button>
-                {a.is_active && <button className="btn-danger text-xs px-2 py-1" onClick={() => deactivate(a.id)}>Deactivate</button>}
+            <td style={{padding:'12px 14px'}}><span style={{padding:'2px 8px',borderRadius:'12px',fontSize:'0.7rem',fontFamily:'monospace',background:'rgba(96,165,250,0.1)',color:'#60a5fa',border:'1px solid rgba(96,165,250,0.2)'}}>{a.role}</span></td>
+            <td style={{padding:'12px 14px',fontFamily:'monospace',color:'#94a3b8'}}>{a.extension||'—'}</td>
+            <td style={{padding:'12px 14px',fontFamily:'monospace',fontSize:'0.75rem',color:'#64748b'}}>{a.sip_username||'—'}</td>
+            <td style={{padding:'12px 14px'}}><StatusBadge s={a.status}/></td>
+            <td style={{padding:'12px 14px'}}>
+              <div style={{display:'flex',gap:'6px'}}>
+                <button style={btnGhost} onClick={() => setQrAgent(a)}>📱 QR</button>
+                {a.is_active && <button style={btnDanger} onClick={() => deactivate(a.id)}>Deactivate</button>}
               </div>
             </td>
           </tr>
@@ -87,40 +112,40 @@ return (
   </div>
 
   {showInvite && (
-    <Modal title="Invite agent" onClose={() => setShowInvite(false)}>
-      <div className="space-y-4">
-        <div><label className="label">Full name *</label><input className="input" value={form.displayName} onChange={e=>setForm({...form,displayName:e.target.value})} placeholder="Jane Smith"/></div>
-        <div><label className="label">Email address *</label><input type="email" className="input" value={form.email} onChange={e=>setForm({...form,email:e.target.value})} placeholder="jane@company.com"/></div>
-        <div className="grid grid-cols-2 gap-3">
+    <Modal title="[ INVITE AGENT ]" onClose={() => setShowInvite(false)}>
+      <div style={{display:'flex',flexDirection:'column',gap:'14px'}}>
+        <div><label style={labelStyle}>Full name *</label><input style={inputStyle} value={form.displayName} onChange={e=>setForm({...form,displayName:e.target.value})} placeholder="Jane Smith"/></div>
+        <div><label style={labelStyle}>Email address *</label><input type="email" style={inputStyle} value={form.email} onChange={e=>setForm({...form,email:e.target.value})} placeholder="jane@company.com"/></div>
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'12px'}}>
           <div>
-            <label className="label">Role</label>
-            <select className="input" value={form.role} onChange={e=>setForm({...form,role:e.target.value})}>
+            <label style={labelStyle}>Role</label>
+            <select style={inputStyle} value={form.role} onChange={e=>setForm({...form,role:e.target.value})}>
               <option value="agent">Agent</option>
               <option value="supervisor">Supervisor</option>
               <option value="admin">Admin</option>
             </select>
           </div>
-          <div><label className="label">Extension</label><input className="input" value={form.extension} onChange={e=>setForm({...form,extension:e.target.value})} placeholder="200"/></div>
+          <div><label style={labelStyle}>Extension</label><input style={inputStyle} value={form.extension} onChange={e=>setForm({...form,extension:e.target.value})} placeholder="200"/></div>
         </div>
-        {error && <p className="text-sm text-red-400 bg-red-950/30 border border-red-900/40 rounded-lg px-3 py-2">{error}</p>}
-        <div className="flex justify-end gap-3 pt-2">
-          <button className="btn-secondary" onClick={() => setShowInvite(false)}>Cancel</button>
-          <button className="btn-primary" onClick={invite} disabled={saving||!form.email||!form.displayName}>{saving?'Inviting…':'Send invite'}</button>
+        {error && <p style={{fontSize:'0.8rem',color:'#f87171',background:'rgba(220,38,38,0.1)',padding:'8px 12px',borderRadius:'6px'}}>{error}</p>}
+        <div style={{display:'flex',justifyContent:'flex-end',gap:'10px',paddingTop:'8px'}}>
+          <button style={btnSecondary} onClick={() => setShowInvite(false)}>Cancel</button>
+          <button style={btnPrimary} onClick={invite} disabled={saving||!form.email||!form.displayName}>{saving?'Inviting...':'Send invite'}</button>
         </div>
       </div>
     </Modal>
   )}
 
   {newCreds && (
-    <Modal title="Agent created ✅" onClose={() => setNewCreds(null)}>
-      <p className="text-sm text-slate-400 mb-4">Share these credentials securely.</p>
-      <div className="bg-[#13161f] border border-[#2e3352] rounded-xl p-4 space-y-2 font-mono text-sm">
-        <div><span className="text-slate-500">Email: </span><span className="text-white">{newCreds.email}</span></div>
-        <div><span className="text-slate-500">Temp password: </span><span className="text-amber-400">{newCreds.temporaryPassword}</span></div>
-        <div><span className="text-slate-500">SIP user: </span><span className="text-white">{newCreds.sip_username}</span></div>
+    <Modal title="[ AGENT CREATED ]" onClose={() => setNewCreds(null)}>
+      <p style={{fontSize:'0.875rem',color:'#94a3b8',marginBottom:'16px'}}>Share these credentials securely with the agent.</p>
+      <div style={{background:'#13161f',border:'1px solid #2e3352',borderRadius:'8px',padding:'16px',fontFamily:'monospace',fontSize:'0.875rem',display:'flex',flexDirection:'column',gap:'8px'}}>
+        <div><span style={{color:'#64748b'}}>Email: </span><span style={{color:'#e2e8f0'}}>{newCreds.email}</span></div>
+        <div><span style={{color:'#64748b'}}>Temp password: </span><span style={{color:'#fbbf24'}}>{newCreds.temporaryPassword}</span></div>
+        <div><span style={{color:'#64748b'}}>SIP user: </span><span style={{color:'#e2e8f0'}}>{newCreds.sip_username}</span></div>
       </div>
-      <p className="text-xs text-amber-500 mt-3">⚠ Ask the agent to change their password on first login.</p>
-      <button className="btn-primary mt-5 w-full justify-center" onClick={() => setNewCreds(null)}>Done</button>
+      <p style={{fontSize:'0.75rem',color:'#f59e0b',marginTop:'12px'}}>Ask the agent to change their password on first login.</p>
+      <button style={{...btnPrimary,width:'100%',marginTop:'16px'}} onClick={() => setNewCreds(null)}>Done</button>
     </Modal>
   )}
 
