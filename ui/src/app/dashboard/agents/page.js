@@ -32,7 +32,6 @@ export default function AgentsPage() {
 const [agents, setAgents]         = useState([]);
 const [loading, setLoading]       = useState(true);
 const [showInvite, setShowInvite] = useState(false);
-const [newCreds, setNewCreds]     = useState(null);
 const [qrAgent, setQrAgent]       = useState(null);
 const [form, setForm]             = useState({ email:'', displayName:'', role:'agent', extension:'' });
 const [saving, setSaving]         = useState(false);
@@ -50,9 +49,10 @@ setSaving(true); setError('');
 try {
 const result = await apiFetch('/api/agents/invite', { method:'POST', body: JSON.stringify({ email: form.email, displayName: form.displayName, role: form.role, extension: form.extension }) });
 if (result.error) throw new Error(result.error);
-setNewCreds(result); setShowInvite(false);
+setShowInvite(false);
 setForm({ email:'', displayName:'', role:'agent', extension:'' });
 await load();
+setQrAgent(result);
 } catch(e) { setError(e.message); } finally { setSaving(false); }
 }
 async function deactivate(id) {
@@ -70,7 +70,7 @@ return (
 <h1 style={{fontSize:'1.25rem',fontWeight:700,color:'#00ff41',fontFamily:'monospace',letterSpacing:'0.1em'}}>[AGENTS]</h1>
 <p style={{fontSize:'0.8rem',color:'#006614',marginTop:'2px',fontFamily:'monospace'}}>// {agents.length} users in your account</p>
 </div>
-<button style={btnPrimary} onClick={() => setShowInvite(true)}>+ Invite agent</button>
+<button style={btnPrimary} onClick={() => setShowInvite(true)}>+ Add agent</button>
 </div>
   <div style={{background:'rgba(0,8,0,0.9)',border:'1px solid rgba(0,255,65,0.15)',borderRadius:'8px',overflow:'hidden'}}>
     <table style={{width:'100%',borderCollapse:'collapse',fontSize:'0.875rem'}}>
@@ -112,7 +112,7 @@ return (
   </div>
 
   {showInvite && (
-    <Modal title="[ INVITE AGENT ]" onClose={() => setShowInvite(false)}>
+    <Modal title="[ ADD AGENT ]" onClose={() => setShowInvite(false)}>
       <div style={{display:'flex',flexDirection:'column',gap:'14px'}}>
         <div><label style={labelStyle}>Full name *</label><input style={inputStyle} value={form.displayName} onChange={e=>setForm({...form,displayName:e.target.value})} placeholder="Jane Smith"/></div>
         <div><label style={labelStyle}>Email address *</label><input type="email" style={inputStyle} value={form.email} onChange={e=>setForm({...form,email:e.target.value})} placeholder="jane@company.com"/></div>
@@ -130,22 +130,9 @@ return (
         {error && <p style={{fontSize:'0.8rem',color:'#f87171',background:'rgba(220,38,38,0.1)',padding:'8px 12px',borderRadius:'6px'}}>{error}</p>}
         <div style={{display:'flex',justifyContent:'flex-end',gap:'10px',paddingTop:'8px'}}>
           <button style={btnSecondary} onClick={() => setShowInvite(false)}>Cancel</button>
-          <button style={btnPrimary} onClick={invite} disabled={saving||!form.email||!form.displayName}>{saving?'Inviting...':'Send invite'}</button>
+          <button style={btnPrimary} onClick={invite} disabled={saving||!form.email||!form.displayName}>{saving?'Creating...':'Create agent'}</button>
         </div>
       </div>
-    </Modal>
-  )}
-
-  {newCreds && (
-    <Modal title="[ AGENT CREATED ]" onClose={() => setNewCreds(null)}>
-      <p style={{fontSize:'0.875rem',color:'#94a3b8',marginBottom:'16px'}}>Share these credentials securely with the agent.</p>
-      <div style={{background:'#13161f',border:'1px solid #2e3352',borderRadius:'8px',padding:'16px',fontFamily:'monospace',fontSize:'0.875rem',display:'flex',flexDirection:'column',gap:'8px'}}>
-        <div><span style={{color:'#64748b'}}>Email: </span><span style={{color:'#e2e8f0'}}>{newCreds.email}</span></div>
-        <div><span style={{color:'#64748b'}}>Temp password: </span><span style={{color:'#fbbf24'}}>{newCreds.temporaryPassword}</span></div>
-        <div><span style={{color:'#64748b'}}>SIP user: </span><span style={{color:'#e2e8f0'}}>{newCreds.sip_username}</span></div>
-      </div>
-      <p style={{fontSize:'0.75rem',color:'#f59e0b',marginTop:'12px'}}>Ask the agent to change their password on first login.</p>
-      <button style={{...btnPrimary,width:'100%',marginTop:'16px'}} onClick={() => setNewCreds(null)}>Done</button>
     </Modal>
   )}
 
