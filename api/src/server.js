@@ -38,6 +38,7 @@ app.use('/api/ivr',      require('./routes/ivr'));
 app.use('/api/payments', require('./routes/payments'));
 app.use('/api/twilio', require('./routes/twilio'));
 app.use('/api/sip', require('./routes/sip'));
+app.use('/api/siplog', require('./routes/siplog'));
 app.use('/api/dialler', require('./routes/dialler'));
 app.use('/api/chat',    require('./routes/chat'));
 
