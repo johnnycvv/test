@@ -5,11 +5,11 @@ const tok = () => localStorage.getItem('cc_token');
 const apiFetch = (path, opts={}) => fetch(API + path, { ...opts, headers: { Authorization: 'Bearer ' + tok(), 'Content-Type': 'application/json', ...(opts.headers||{}) } }).then(r => r.json());
 function Modal({ title, onClose, children }) {
 return (
-<div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.7)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:50,padding:'16px'}}>
-<div style={{width:'100%',maxWidth:'440px',background:'rgba(0,8,0,0.97)',border:'1px solid rgba(0,255,65,0.3)',borderRadius:'8px',padding:'24px'}}>
+<div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.7)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:50,padding:'16px',overflowY:'auto'}}>
+<div style={{width:'100%',maxWidth:'500px',background:'rgba(0,8,0,0.97)',border:'1px solid rgba(0,255,65,0.3)',borderRadius:'8px',padding:'24px',margin:'auto'}}>
 <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'20px'}}>
 <h2 style={{color:'#00ff41',fontFamily:'monospace',fontSize:'0.9rem',fontWeight:'bold'}}>{title}</h2>
-<button onClick={onClose} style={{background:'none',border:'none',color:'#006614',cursor:'pointer',fontSize:'1.2rem'}}>✕</button>
+<button onClick={onClose} style={{background:'none',border:'none',color:'#006614',cursor:'pointer',fontSize:'1.2rem'}}>X</button>
 </div>
 {children}
 </div>
@@ -107,7 +107,11 @@ return (
                 <div style={{color:'#00ff41',fontFamily:'monospace',fontWeight:600}}>{q.name}</div>
                 <div style={{fontSize:'0.75rem',color:'#006614'}}>{q.description}</div>
               </td>
-              <td style={{padding:'12px 14px',color:'#94a3b8',fontFamily:'monospace',fontSize:'0.75rem'}}>{(q.strategy||'').replace('_',' ')}</td>
+              <td style={{padding:'12px 14px'}}>
+                <span style={{padding:'2px 8px',borderRadius:'12px',fontSize:'0.7rem',fontFamily:'monospace',background:q.strategy==='ring_all'?'rgba(251,191,36,0.1)':'rgba(0,255,65,0.06)',color:q.strategy==='ring_all'?'#fbbf24':'#00aa2a',border:'1px solid '+(q.strategy==='ring_all'?'rgba(251,191,36,0.3)':'rgba(0,255,65,0.15)')}}>
+                  {q.strategy==='ring_all'?'Ring all':(q.strategy||'').replace('_',' ')}
+                </span>
+              </td>
               <td style={{padding:'12px 14px',color:'#94a3b8'}}>{q.agentCount||0}</td>
               <td style={{padding:'12px 14px',color:'#94a3b8'}}>{Math.floor((q.max_wait_seconds||0)/60)}m</td>
               <td style={{padding:'12px 14px'}}>
@@ -132,18 +136,32 @@ return (
 
   {showCreate && (
     <Modal title={editQueue ? '[ EDIT QUEUE ]' : '[ NEW QUEUE ]'} onClose={() => { setShowCreate(false); setEditQueue(null); }}>
-      <div style={{display:'flex',flexDirection:'column',gap:'14px'}}>
+      <div style={{display:'flex',flexDirection:'column',gap:'14px',maxHeight:'75vh',overflowY:'auto',paddingRight:'4px'}}>
         <div><label style={lbl}>Queue name *</label><input style={inp} value={form.name} onChange={e=>setForm({...form,name:e.target.value})} placeholder="e.g. Sales"/></div>
         <div><label style={lbl}>Description</label><input style={inp} value={form.description} onChange={e=>setForm({...form,description:e.target.value})} placeholder="Optional"/></div>
+
         <div>
-          <label style={lbl}>Strategy</label>
-          <select style={inp} value={form.strategy} onChange={e=>setForm({...form,strategy:e.target.value})}>
-            <option value="round_robin">Round robin</option>
-            <option value="least_idle">Least idle</option>
-            <option value="sequential">Sequential</option>
-          </select>
+          <label style={lbl}>Distribution strategy</label>
+          <div style={{display:'flex',flexDirection:'column',gap:'6px',marginTop:'6px'}}>
+            {[
+              {val:'round_robin', label:'Round robin', desc:'Rotate calls evenly between all agents'},
+              {val:'ring_all',    label:'Ring all',    desc:'All agents ring at once — fastest to answer gets the call'},
+              {val:'least_idle',  label:'Least idle',  desc:'Route to the agent who has been idle longest'},
+              {val:'sequential',  label:'Sequential',  desc:'Always try agents in priority order'},
+            ].map(s => (
+              <div key={s.val} onClick={() => setForm({...form,strategy:s.val})} style={{padding:'10px 12px',borderRadius:'6px',cursor:'pointer',border:'1px solid '+(form.strategy===s.val?'rgba(0,255,65,0.4)':'rgba(0,255,65,0.1)'),background:form.strategy===s.val?'rgba(0,255,65,0.06)':'transparent',display:'flex',alignItems:'center',gap:'10px'}}>
+                <div style={{width:'14px',height:'14px',borderRadius:'50%',border:'2px solid '+(form.strategy===s.val?'#00ff41':'#006614'),background:form.strategy===s.val?'#00ff41':'transparent',flexShrink:0}}/>
+                <div>
+                  <div style={{color:form.strategy===s.val?'#00ff41':'#94a3b8',fontFamily:'monospace',fontSize:'0.8rem',fontWeight:600}}>{s.label}</div>
+                  <div style={{color:'#475569',fontSize:'0.72rem',marginTop:'1px'}}>{s.desc}</div>
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
-        <div><label style={lbl}>Max wait (seconds)</label><input type="number" style={inp} value={form.maxWaitSeconds} onChange={e=>setForm({...form,maxWaitSeconds:parseInt(e.target.value)})} min={30} max={3600}/></div>
+
+        <div><label style={lbl}>Max wait time (seconds)</label><input type="number" style={inp} value={form.maxWaitSeconds} onChange={e=>setForm({...form,maxWaitSeconds:parseInt(e.target.value)})} min={30} max={3600}/></div>
+
         <div style={{display:'flex',gap:'24px'}}>
           <label style={{display:'flex',alignItems:'center',gap:'8px',fontSize:'0.875rem',color:'#94a3b8',cursor:'pointer'}}>
             <input type="checkbox" checked={form.recordingEnabled} onChange={e=>setForm({...form,recordingEnabled:e.target.checked})}/>
@@ -154,6 +172,7 @@ return (
             Callback option
           </label>
         </div>
+
         {error && <p style={{fontSize:'0.8rem',color:'#f87171',background:'rgba(220,38,38,0.1)',padding:'8px 12px',borderRadius:'6px'}}>{error}</p>}
         <div style={{display:'flex',justifyContent:'flex-end',gap:'10px',paddingTop:'8px'}}>
           <button style={btnS} onClick={()=>{setShowCreate(false);setEditQueue(null);}}>Cancel</button>
