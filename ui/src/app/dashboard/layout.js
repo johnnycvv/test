@@ -11,8 +11,8 @@ const NAV = [
   { href: '/dashboard/cdr',      label: '> Call Logs' },
   { href: '/dashboard/trunks',   label: '> SIP Trunks' },
   { href: '/dashboard/dids',     label: '> DID Numbers' },
+  { href: '/dashboard/siplog',   label: '> SIP Call Log' },
   { href: '/dashboard/settings', label: '> Settings' },
-];
 
 export default function DashboardLayout({ children }) {
   const pathname = usePathname();
