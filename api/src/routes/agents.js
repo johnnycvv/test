@@ -38,7 +38,7 @@ router.patch('/:id', requireRole('admin', 'supervisor'), async (req, res) => {
     if (isActive !== undefined) { fields.push('is_active=$' + i); i++; vals.push(isActive); }
     if (!fields.length) return res.status(400).json({ error: 'Nothing to update' });
     vals.push(req.params.id, req.tenantId);
-    const q = 'UPDATE users SET ' + fields.join(',') + ' WHERE id=′+i+′ANDtenantid=' + i + ' AND tenant_id=
+    const q = "UPDATE users SET " + fields.join(",") + " WHERE id=$" + i + " AND tenant_id=$" + (i + 1);
 ′+i+′ANDtenanti​d=' + (i + 1);
     await db.query(q, vals);
     res.json({ ok: true });
